@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/router';
 import { Upload, FileVideo, Download, Loader2, CheckCircle, AlertCircle, Coffee, Sparkles, Home, CreditCard, Coins } from 'lucide-react';
 
 export default function Transcipio() {
@@ -8,10 +7,9 @@ export default function Transcipio() {
   const [transcript, setTranscript] = useState(null);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState('');
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [language, setLanguage] = useState('en');
   const [videoDuration, setVideoDuration] = useState(null);
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const router = useRouter();
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -52,11 +50,6 @@ export default function Transcipio() {
     setVideoDuration(null);
   };
 
-  const goHome = () => {
-    // navigate to root landing page
-    router.push('/');
-  };
-
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -65,83 +58,126 @@ export default function Transcipio() {
 
   const handleTranscribe = async () => {
     if (!file) return;
-    // Basic validation
-    const maxSizeMB = 200; // change as needed
-    if (file.size / 1024 / 1024 > maxSizeMB) {
-      setError(`File too large. Max ${maxSizeMB} MB.`);
-      setStatus('error');
-      return;
-    }
     setStatus('uploading');
     setError(null);
     setProgress('Uploading video...');
 
     try {
-      // Read file as base64 and send to our server-side upload endpoint
-      setProgress('Uploading to server...');
-      const fileToBase64 = (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      // Step 1: Read file as base64 and upload via server proxy
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Data = reader.result;
+        
+        try {
+          setProgress('Uploading to cloud storage...');
+          const uploadResponse = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              data: base64Data,
+              mimeType: file.type,
+            }),
+          });
 
-      const base64 = await fileToBase64(file);
-      setProgress('Uploading to cloud storage (server-side)...');
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, data: base64, mimeType: file.type }),
-      });
+          if (!uploadResponse.ok) {
+            const errorData = await uploadResponse.json();
+            throw new Error(errorData.error || 'Upload failed');
+          }
 
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json().catch(() => ({}));
-        throw new Error(err.error || 'Server upload failed');
-      }
+          const uploadData = await uploadResponse.json();
+          const videoUrl = uploadData.secure_url;
 
-      const cloudinaryData = await uploadRes.json();
-      const videoUrl = cloudinaryData.secure_url;
+          // Step 2: Send to AssemblyAI via server proxy
+          setStatus('transcribing');
+          setProgress('Starting transcription...');
 
-      setStatus('transcribing');
-      setProgress('Starting transcription...');
+          const transcribeResponse = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio_url: videoUrl, language_code: language }),
+          });
 
-      // Create transcript via serverless API (keeps API key secret)
-      const createRes = await fetch('/api/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio_url: videoUrl, language_code: language }),
-      });
+          if (!transcribeResponse.ok) {
+            const errorData = await transcribeResponse.json();
+            throw new Error(errorData.error || 'Transcription initiation failed');
+          }
 
-      if (!createRes.ok) {
-        const errBody = await createRes.json().catch(() => ({}));
-        throw new Error(errBody.error || 'Failed to create transcript');
-      }
+          const transcribeData = await transcribeResponse.json();
+          const transcriptId = transcribeData.id;
 
-      const createData = await createRes.json();
-      const transcriptId = createData.id;
+          // Step 3: Poll for transcript completion
+          setProgress('Transcribing... This may take a few minutes.');
+          let transcriptResult = null;
+          
+          while (true) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            const pollingResponse = await fetch(`/api/transcribe?id=${transcriptId}`);
+            
+            if (!pollingResponse.ok) {
+              const errorData = await pollingResponse.json();
+              throw new Error(errorData.error || 'Polling failed');
+            }
 
-      setProgress('Transcribing... This may take a few minutes.');
-      let transcriptResult = null;
-
-      // Poll serverless endpoint for status (server proxies AssemblyAI)
-      while (true) {
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        const pollingResponse = await fetch(`/api/transcribe?id=${transcriptId}`);
-        transcriptResult = await pollingResponse.json();
-        if (transcriptResult.status === 'completed') {
-          setStatus('completed');
-          setTranscript(transcriptResult);
+            transcriptResult = await pollingResponse.json();
+            if (transcriptResult.status === 'completed') {
+              setStatus('completed');
+              setTranscript(transcriptResult);
+              setProgress('');
+              break;
+            } else if (transcriptResult.status === 'error') {
+              throw new Error(transcriptResult.error || 'Transcription failed');
+            }
+          }
+        } catch (err) {
+          setStatus('error');
+          setError(err.message);
           setProgress('');
-          break;
-        } else if (transcriptResult.status === 'error') {
-          throw new Error(transcriptResult.error || 'Transcription failed');
         }
-      }
+      };
+      reader.readAsDataURL(file);
     } catch (err) {
       setStatus('error');
       setError(err.message);
       setProgress('');
     }
+  };
+
+  const formatTranscriptWithTimestamps = () => {
+    if (!transcript || !transcript.words) return '';
+    
+    let result = '';
+    let currentLine = '';
+    let lineStartTime = 0;
+    let wordCount = 0;
+    
+    transcript.words.forEach((word, index) => {
+      if (wordCount === 0) {
+        lineStartTime = word.start;
+      }
+      
+      currentLine += word.text + ' ';
+      wordCount++;
+      
+      const timeSinceStart = (word.end - lineStartTime) / 1000;
+      
+      if (timeSinceStart >= 2 || index === transcript.words.length - 1) {
+        const startFormatted = formatTimestamp(lineStartTime);
+        const endFormatted = formatTimestamp(word.end);
+        result += `[${startFormatted} - ${endFormatted}] ${currentLine.trim()}\n\n`;
+        currentLine = '';
+        wordCount = 0;
+      }
+    });
+    
+    return result;
+  };
+
+  const formatTimestamp = (ms) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   const downloadTranscript = (format) => {
@@ -173,7 +209,7 @@ export default function Transcipio() {
     URL.revokeObjectURL(url);
   };
 
-  const formatTime = (ms) => {
+  const formatTimeSRT = (ms) => {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -183,56 +219,6 @@ export default function Transcipio() {
   };
 
   const pad = (num, size = 2) => String(num).padStart(size, '0');
-
-  const formatTranscriptWithTimestamps = () => {
-    if (!transcript || !transcript.words) return '';
-    // Group words into caption lines aiming for ~1.5-2.5s per caption
-    const minSec = 1.5;
-    // const maxSec = 2.5; // we aim for around 2s, but won't strictly enforce max
-
-    let result = '';
-    let currentLine = '';
-    let lineStartTime = 0;
-    let wordCount = 0;
-
-    transcript.words.forEach((word, index) => {
-      if (wordCount === 0) {
-        lineStartTime = word.start;
-      }
-
-      currentLine += word.text + ' ';
-      wordCount++;
-
-      const durationSec = (word.end - lineStartTime) / 1000;
-
-      // Close the caption when we've reached at least the minimum seconds
-      if (durationSec >= minSec || index === transcript.words.length - 1) {
-        const startFormatted = formatTimestamp(lineStartTime);
-        const endFormatted = formatTimestamp(word.end);
-        result += `[${startFormatted} - ${endFormatted}] ${currentLine.trim()}\n\n`;
-        currentLine = '';
-        wordCount = 0;
-      }
-    });
-
-    return result;
-  };
-
-  const formatTimestamp = (ms) => {
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  const formatTimeSRT = (ms) => {
-    const totalSeconds = Math.floor(ms / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    const milliseconds = ms % 1000;
-    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)},${pad(milliseconds, 3)}`;
-  };
 
   return (
     <div className="min-h-screen bg-slate-950 relative overflow-hidden">
@@ -256,6 +242,18 @@ export default function Transcipio() {
       </div>
 
       <div className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {/* Home Button */}
+        {(file || status !== 'idle') && (
+          <button
+            onClick={resetToHome}
+            className="mb-6 inline-flex items-center gap-2 bg-slate-800/50 hover:bg-slate-800 text-emerald-400 font-semibold py-3 px-6 rounded-xl transition-all duration-300 border border-slate-700/50 hover:border-emerald-500/30"
+          >
+            <Home className="w-5 h-5" />
+            Home
+          </button>
+        )}
+
+        {/* Header */}
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-3 mb-6 group">
             <div className="relative">
@@ -298,14 +296,10 @@ export default function Transcipio() {
                         <p className="text-emerald-400/70 text-lg">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                         {videoDuration && (
                           <div className="mt-3">
-                            <div className="flex items-center gap-3 justify-center">
-                              <span className="text-slate-400 text-xs">0:00</span>
-                              <div className="w-72 h-2 bg-slate-800 rounded-full overflow-hidden">
-                                <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full" style={{ width: '100%' }}></div>
-                              </div>
-                              <span className="text-slate-400 text-xs">{formatDuration(videoDuration)}</span>
+                            <p className="text-slate-400 text-sm mb-2">Duration: {formatDuration(videoDuration)}</p>
+                            <div className="w-64 mx-auto h-2 bg-slate-800 rounded-full overflow-hidden">
+                              <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full" style={{ width: '100%' }}></div>
                             </div>
-                            <p className="text-slate-400 text-sm mt-2">Duration: {formatDuration(videoDuration)}</p>
                           </div>
                         )}
                       </div>
@@ -418,7 +412,7 @@ export default function Transcipio() {
               </div>
 
               <div className="bg-slate-950/70 rounded-xl p-6 mb-6 max-h-96 overflow-y-auto border border-slate-800/50 hover:border-emerald-500/20 transition-colors duration-300">
-                <p className="text-slate-200 leading-relaxed whitespace-pre-wrap text-lg font-mono">
+                <p className="text-slate-200 leading-relaxed whitespace-pre-wrap text-base font-mono">
                   {formatTranscriptWithTimestamps()}
                 </p>
               </div>
@@ -441,36 +435,61 @@ export default function Transcipio() {
                 </button>
               </div>
 
-              <button onClick={() => { setFile(null); setStatus('idle'); setTranscript(null); }} className="w-full bg-slate-800/50 hover:bg-slate-800 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 border border-slate-700/50 hover:border-emerald-500/30 transform hover:scale-[1.01]">
+              <button onClick={resetToHome} className="w-full bg-slate-800/50 hover:bg-slate-800 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 border border-slate-700/50 hover:border-emerald-500/30 transform hover:scale-[1.01]">
                 Transcribe Another Video
               </button>
             </div>
           </div>
         )}
 
-        <div className="mt-16 text-center">
-          <a href="https://ko-fi.com/tajpollard" target="_blank" rel="noopener noreferrer" className="group/kofi relative inline-flex items-center gap-4 bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 hover:from-pink-400 hover:via-rose-400 hover:to-pink-500 text-white font-semibold py-5 px-10 rounded-2xl transition-all duration-300 shadow-xl shadow-pink-500/25 hover:shadow-pink-500/50 transform hover:scale-105 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/kofi:translate-x-[100%] transition-transform duration-1000"></div>
-            <div className="relative">
-              <div className="absolute inset-0 bg-white rounded-xl blur-lg opacity-30 group-hover/kofi:opacity-50 transition-opacity"></div>
-              <Coffee className="relative w-7 h-7" />
-            </div>
-            <div className="relative text-left">
-              <div className="text-base font-bold">Support Transcipio</div>
-              <div className="text-sm opacity-90 font-normal">Buy me a coffee and contribute to this project</div>
-            </div>
-          </a>
+        {/* Donation Buttons */}
+        <div className="mt-16 text-center space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+            <a
+              href="https://donate.stripe.com/6oUcN531PgI59DM4Xs9sk02"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group/stripe relative inline-flex items-center gap-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 hover:from-indigo-400 hover:via-purple-400 hover:to-indigo-500 text-white font-semibold py-5 px-10 rounded-2xl transition-all duration-300 shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/50 transform hover:scale-105 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/stripe:translate-x-[100%] transition-transform duration-1000"></div>
+              <div className="relative">
+                <div className="absolute inset-0 bg-white rounded-xl blur-lg opacity-30 group-hover/stripe:opacity-50 transition-opacity"></div>
+                <CreditCard className="relative w-7 h-7" />
+              </div>
+              <div className="relative text-left">
+                <div className="text-base font-bold">Donate Securely with Stripe</div>
+                <div className="text-sm opacity-90 font-normal">Support this project</div>
+              </div>
+            </a>
+
+            <a
+              href="https://nowpayments.io/donation/tpbs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group/crypto relative inline-flex items-center gap-4 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-400 hover:via-amber-400 hover:to-orange-500 text-white font-semibold py-5 px-10 rounded-2xl transition-all duration-300 shadow-xl shadow-orange-500/25 hover:shadow-orange-500/50 transform hover:scale-105 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/crypto:translate-x-[100%] transition-transform duration-1000"></div>
+              <div className="relative">
+                <div className="absolute inset-0 bg-white rounded-xl blur-lg opacity-30 group-hover/crypto:opacity-50 transition-opacity"></div>
+                <Coins className="relative w-7 h-7" />
+              </div>
+              <div className="relative text-left">
+                <div className="text-base font-bold">Donate Crypto</div>
+                <div className="text-sm opacity-90 font-normal">Ethereum & Monero accepted</div>
+              </div>
+            </a>
+          </div>
         </div>
 
-        <div className="mt-12 text-center">
+        {/* Footer */}
+        <div className="mt-16 pt-8 border-t border-slate-800/50 text-center space-y-4">
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-4 sm:gap-8 text-slate-500 text-sm">
+            <a href="/privacy" className="hover:text-emerald-400 transition-colors">Privacy Policy</a>
+            <span className="hidden sm:inline">•</span>
+            <p>© 2025 TP Business Solutions. All Rights Reserved.</p>
+          </div>
           <p className="text-slate-500 text-sm font-light">Faster. Smarter. More accurate.</p>
         </div>
-        <footer className="mt-8 text-center text-slate-500 text-sm">
-          <div className="mb-2">
-            <a href="/privacy" className="underline hover:text-emerald-300">Privacy Policy</a>
-          </div>
-          <div>© 2025 All Rights Reserved . TP Business Solutions .</div>
-        </footer>
       </div>
     </div>
   );
