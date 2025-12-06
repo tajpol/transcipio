@@ -82,11 +82,15 @@ export default function Transcipio() {
 
           if (!uploadResponse.ok) {
             const errorData = await uploadResponse.json();
-            throw new Error(errorData.error || 'Upload failed');
+            throw new Error(errorData.error || `Upload failed with status ${uploadResponse.status}`);
           }
 
           const uploadData = await uploadResponse.json();
           const videoUrl = uploadData.secure_url;
+
+          if (!videoUrl) {
+            throw new Error('Upload succeeded but no video URL returned');
+          }
 
           // Step 2: Send to AssemblyAI via server proxy
           setStatus('transcribing');
@@ -100,10 +104,16 @@ export default function Transcipio() {
 
           if (!transcribeResponse.ok) {
             const errorData = await transcribeResponse.json();
-            throw new Error(errorData.error || 'Transcription initiation failed');
+            const errorMsg = errorData.error || errorData.message || `Transcription initiation failed with status ${transcribeResponse.status}`;
+            throw new Error(errorMsg);
           }
 
           const transcribeData = await transcribeResponse.json();
+          
+          if (!transcribeData.id) {
+            throw new Error('Transcription initiated but no ID returned');
+          }
+          
           const transcriptId = transcribeData.id;
 
           // Step 3: Poll for transcript completion
@@ -116,7 +126,8 @@ export default function Transcipio() {
             
             if (!pollingResponse.ok) {
               const errorData = await pollingResponse.json();
-              throw new Error(errorData.error || 'Polling failed');
+              const errorMsg = errorData.error || errorData.message || `Polling failed with status ${pollingResponse.status}`;
+              throw new Error(errorMsg);
             }
 
             transcriptResult = await pollingResponse.json();
@@ -126,7 +137,8 @@ export default function Transcipio() {
               setProgress('');
               break;
             } else if (transcriptResult.status === 'error') {
-              throw new Error(transcriptResult.error || 'Transcription failed');
+              const errorMsg = transcriptResult.error || 'Transcription failed on AssemblyAI';
+              throw new Error(errorMsg);
             }
           }
         } catch (err) {

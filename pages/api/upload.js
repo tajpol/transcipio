@@ -40,11 +40,19 @@ export default async function handler(req, res) {
 
     const json = await cloudRes.json();
     if (!cloudRes.ok) {
-      return res.status(cloudRes.status).json({ error: json.error || 'Cloudinary upload failed', details: json });
+      console.error('Cloudinary Error:', json);
+      return res.status(cloudRes.status).json({ error: json.error?.message || json.error || 'Cloudinary upload failed', details: json });
+    }
+
+    // Verify secure_url exists and is valid
+    if (!json.secure_url) {
+      console.error('No secure_url in Cloudinary response:', json);
+      return res.status(500).json({ error: 'Cloudinary upload succeeded but no URL returned' });
     }
 
     return res.status(200).json(json);
   } catch (err) {
+    console.error('Upload API Error:', err);
     return res.status(500).json({ error: err.message });
   }
 }
