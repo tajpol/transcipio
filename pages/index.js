@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import { Upload, FileVideo, Download, Loader2, CheckCircle, AlertCircle, Coffee, Sparkles, Home, CreditCard, Coins } from 'lucide-react';
 
 export default function Transcipio() {
@@ -10,6 +11,7 @@ export default function Transcipio() {
   const [language, setLanguage] = useState('en');
   const [videoDuration, setVideoDuration] = useState(null);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const router = useRouter();
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -48,6 +50,11 @@ export default function Transcipio() {
     setTranscript(null);
     setError(null);
     setVideoDuration(null);
+  };
+
+  const goHome = () => {
+    // navigate to root landing page
+    router.push('/');
   };
 
   const formatDuration = (seconds) => {
@@ -179,23 +186,27 @@ export default function Transcipio() {
 
   const formatTranscriptWithTimestamps = () => {
     if (!transcript || !transcript.words) return '';
-    
+    // Group words into caption lines aiming for ~1.5-2.5s per caption
+    const minSec = 1.5;
+    // const maxSec = 2.5; // we aim for around 2s, but won't strictly enforce max
+
     let result = '';
     let currentLine = '';
     let lineStartTime = 0;
     let wordCount = 0;
-    
+
     transcript.words.forEach((word, index) => {
       if (wordCount === 0) {
         lineStartTime = word.start;
       }
-      
+
       currentLine += word.text + ' ';
       wordCount++;
-      
-      const timeSinceStart = (word.end - lineStartTime) / 1000;
-      
-      if (timeSinceStart >= 2 || index === transcript.words.length - 1) {
+
+      const durationSec = (word.end - lineStartTime) / 1000;
+
+      // Close the caption when we've reached at least the minimum seconds
+      if (durationSec >= minSec || index === transcript.words.length - 1) {
         const startFormatted = formatTimestamp(lineStartTime);
         const endFormatted = formatTimestamp(word.end);
         result += `[${startFormatted} - ${endFormatted}] ${currentLine.trim()}\n\n`;
@@ -203,7 +214,7 @@ export default function Transcipio() {
         wordCount = 0;
       }
     });
-    
+
     return result;
   };
 
@@ -285,8 +296,20 @@ export default function Transcipio() {
                       <div>
                         <p className="text-2xl font-semibold text-white mb-1">{file.name}</p>
                         <p className="text-emerald-400/70 text-lg">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                        {videoDuration && (
+                          <div className="mt-3">
+                            <div className="flex items-center gap-3 justify-center">
+                              <span className="text-slate-400 text-xs">0:00</span>
+                              <div className="w-72 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full" style={{ width: '100%' }}></div>
+                              </div>
+                              <span className="text-slate-400 text-xs">{formatDuration(videoDuration)}</span>
+                            </div>
+                            <p className="text-slate-400 text-sm mt-2">Duration: {formatDuration(videoDuration)}</p>
+                          </div>
+                        )}
                       </div>
-                      <button type="button" className="text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:scale-105">
+                      <button type="button" onClick={handleChangeFile} className="text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:scale-105 bg-slate-800/50 px-4 py-2 rounded-lg">
                         Change file
                       </button>
                     </>
@@ -395,8 +418,8 @@ export default function Transcipio() {
               </div>
 
               <div className="bg-slate-950/70 rounded-xl p-6 mb-6 max-h-96 overflow-y-auto border border-slate-800/50 hover:border-emerald-500/20 transition-colors duration-300">
-                <p className="text-slate-200 leading-relaxed whitespace-pre-wrap text-lg">
-                  {transcript.text}
+                <p className="text-slate-200 leading-relaxed whitespace-pre-wrap text-lg font-mono">
+                  {formatTranscriptWithTimestamps()}
                 </p>
               </div>
 
@@ -442,6 +465,12 @@ export default function Transcipio() {
         <div className="mt-12 text-center">
           <p className="text-slate-500 text-sm font-light">Faster. Smarter. More accurate.</p>
         </div>
+        <footer className="mt-8 text-center text-slate-500 text-sm">
+          <div className="mb-2">
+            <a href="/privacy" className="underline hover:text-emerald-300">Privacy Policy</a>
+          </div>
+          <div>© 2025 All Rights Reserved . TP Business Solutions .</div>
+        </footer>
       </div>
     </div>
   );
