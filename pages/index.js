@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileVideo, Download, Loader2, CheckCircle, AlertCircle, Coffee, Sparkles } from 'lucide-react';
+import { Upload, FileVideo, Download, Loader2, CheckCircle, AlertCircle, Coffee, Sparkles, Home, CreditCard, Coins } from 'lucide-react';
 
 export default function Transcipio() {
   const [file, setFile] = useState(null);
@@ -8,6 +8,7 @@ export default function Transcipio() {
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState('');
   const [language, setLanguage] = useState('en');
+  const [videoDuration, setVideoDuration] = useState(null);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -25,57 +26,100 @@ export default function Transcipio() {
       setStatus('idle');
       setTranscript(null);
       setError(null);
+      
+      // Get video duration
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => {
+        window.URL.revokeObjectURL(video.src);
+        setVideoDuration(video.duration);
+      };
+      video.src = URL.createObjectURL(selectedFile);
     }
+  };
+
+  const handleChangeFile = () => {
+    document.getElementById('video-upload').click();
+  };
+
+  const resetToHome = () => {
+    setFile(null);
+    setStatus('idle');
+    setTranscript(null);
+    setError(null);
+    setVideoDuration(null);
+  };
+
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const handleTranscribe = async () => {
     if (!file) return;
+    // Basic validation
+    const maxSizeMB = 200; // change as needed
+    if (file.size / 1024 / 1024 > maxSizeMB) {
+      setError(`File too large. Max ${maxSizeMB} MB.`);
+      setStatus('error');
+      return;
+    }
     setStatus('uploading');
     setError(null);
     setProgress('Uploading video...');
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('upload_preset', 'ml_default');
-      
-      setProgress('Uploading to cloud storage...');
-      const cloudinaryResponse = await fetch(
-        'https://api.cloudinary.com/v1_1/dso0luj36/video/upload',
-        { method: 'POST', body: formData }
-      );
+      // Read file as base64 and send to our server-side upload endpoint
+      setProgress('Uploading to server...');
+      const fileToBase64 = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
 
-      if (!cloudinaryResponse.ok) {
-        throw new Error('Upload failed. Check your Cloudinary settings.');
+      const base64 = await fileToBase64(file);
+      setProgress('Uploading to cloud storage (server-side)...');
+      const uploadRes = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, data: base64, mimeType: file.type }),
+      });
+
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Server upload failed');
       }
 
-      const cloudinaryData = await cloudinaryResponse.json();
+      const cloudinaryData = await uploadRes.json();
       const videoUrl = cloudinaryData.secure_url;
 
       setStatus('transcribing');
       setProgress('Starting transcription...');
 
-      const assemblyResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+      // Create transcript via serverless API (keeps API key secret)
+      const createRes = await fetch('/api/transcribe', {
         method: 'POST',
-        headers: {
-          'authorization': 'fde16e7d9dd44ebebd9312bbcf4c6b6a',
-          'content-type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio_url: videoUrl, language_code: language }),
       });
 
-      const assemblyData = await assemblyResponse.json();
-      const transcriptId = assemblyData.id;
+      if (!createRes.ok) {
+        const errBody = await createRes.json().catch(() => ({}));
+        throw new Error(errBody.error || 'Failed to create transcript');
+      }
+
+      const createData = await createRes.json();
+      const transcriptId = createData.id;
 
       setProgress('Transcribing... This may take a few minutes.');
       let transcriptResult = null;
-      
+
+      // Poll serverless endpoint for status (server proxies AssemblyAI)
       while (true) {
         await new Promise(resolve => setTimeout(resolve, 3000));
-        const pollingResponse = await fetch(
-          `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
-          { headers: { 'authorization': 'fde16e7d9dd44ebebd9312bbcf4c6b6a' } }
-        );
+        const pollingResponse = await fetch(`/api/transcribe?id=${transcriptId}`);
         transcriptResult = await pollingResponse.json();
         if (transcriptResult.status === 'completed') {
           setStatus('completed');
@@ -99,12 +143,12 @@ export default function Transcipio() {
     let filename = '';
 
     if (format === 'txt') {
-      content = transcript.text;
+      content = formatTranscriptWithTimestamps();
       filename = 'transcript.txt';
     } else if (format === 'srt') {
       content = transcript.words.reduce((acc, word, i) => {
-        const start = formatTime(word.start);
-        const end = formatTime(word.end);
+        const start = formatTimeSRT(word.start);
+        const end = formatTimeSRT(word.end);
         return acc + `${i + 1}\n${start} --> ${end}\n${word.text}\n\n`;
       }, '');
       filename = 'transcript.srt';
@@ -132,6 +176,52 @@ export default function Transcipio() {
   };
 
   const pad = (num, size = 2) => String(num).padStart(size, '0');
+
+  const formatTranscriptWithTimestamps = () => {
+    if (!transcript || !transcript.words) return '';
+    
+    let result = '';
+    let currentLine = '';
+    let lineStartTime = 0;
+    let wordCount = 0;
+    
+    transcript.words.forEach((word, index) => {
+      if (wordCount === 0) {
+        lineStartTime = word.start;
+      }
+      
+      currentLine += word.text + ' ';
+      wordCount++;
+      
+      const timeSinceStart = (word.end - lineStartTime) / 1000;
+      
+      if (timeSinceStart >= 2 || index === transcript.words.length - 1) {
+        const startFormatted = formatTimestamp(lineStartTime);
+        const endFormatted = formatTimestamp(word.end);
+        result += `[${startFormatted} - ${endFormatted}] ${currentLine.trim()}\n\n`;
+        currentLine = '';
+        wordCount = 0;
+      }
+    });
+    
+    return result;
+  };
+
+  const formatTimestamp = (ms) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const formatTimeSRT = (ms) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const milliseconds = ms % 1000;
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)},${pad(milliseconds, 3)}`;
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 relative overflow-hidden">
