@@ -7,6 +7,7 @@ export default function Transcipio() {
   const [transcript, setTranscript] = useState(null);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState('');
+  const [language, setLanguage] = useState('en');
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -60,7 +61,7 @@ export default function Transcipio() {
           'authorization': 'fde16e7d9dd44ebebd9312bbcf4c6b6a',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ audio_url: videoUrl, language_code: 'en' }),
+        body: JSON.stringify({ audio_url: videoUrl, language_code: language }),
       });
 
       const assemblyData = await assemblyResponse.json();
@@ -211,7 +212,31 @@ export default function Transcipio() {
                         <p className="text-2xl font-semibold text-white mb-2 group-hover/upload:text-emerald-400 transition-colors duration-300">
                           Upload your video
                         </p>
-                        <p className="text-slate-400 text-base">MP4, WebM, MOV • English & Spanish supported</p>
+                        <p className="text-slate-400 text-base mb-4">MP4, WebM, MOV</p>
+                        <div className="flex items-center justify-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setLanguage('en')}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                              language === 'en'
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                            }`}
+                          >
+                            English
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLanguage('es')}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
+                              language === 'es'
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                            }`}
+                          >
+                            Español
+                          </button>
+                        </div>
                       </div>
                     </>
                   )}
