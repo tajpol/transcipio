@@ -1,1 +1,1 @@
-2025 TP Business Solutions Cooyright- All Rights Reserved
+2025 TP Business Solutions Copyright- All Rights Reserved
