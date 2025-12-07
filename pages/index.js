@@ -96,7 +96,6 @@ export default function Transcipio() {
       const transcriptId = transcribeData.id;
 
       setProgress('Transcribing... This may take a few minutes.');
-      
       while (true) {
         await new Promise(resolve => setTimeout(resolve, 3000));
         
@@ -189,8 +188,7 @@ export default function Transcipio() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const formatTimeSRT = (ms) => {
+const formatTimeSRT = (ms) => {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -281,7 +279,7 @@ export default function Transcipio() {
                             </div>
                           </div>
                         )}
-                      </div>
+</div>
                       <button type="button" onClick={handleChangeFile} className="text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:scale-105 bg-slate-800/50 px-4 py-2 rounded-lg">
                         Change file
                       </button>
@@ -403,4 +401,71 @@ export default function Transcipio() {
                   <span className="relative">TXT</span>
                 </button>
                 <button onClick={() => downloadTranscript('srt')} className="group/download relative bg-gradient-to-r from-teal-500 to-cyan-500 hover:opacity-90 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 overflow-hidden">
-                  <div className="absolute inset-0 bg-gra
+                  <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/download:translate-x-[100%] transition-transform duration-700"></div>
+                  <Download className="relative w-5 h-5" />
+                  <span className="relative">SRT</span>
+                </button>
+                <button onClick={() => downloadTranscript('json')} className="group/download relative bg-gradient-to-r from-cyan-500 to-blue-500 hover:opacity-90 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/download:translate-x-[100%] transition-transform duration-700"></div>
+                  <Download className="relative w-5 h-5" />
+                  <span className="relative">JSON</span>
+                </button>
+              </div>
+
+              <button onClick={resetToHome} className="w-full bg-slate-800/50 hover:bg-slate-800 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 border border-slate-700/50 hover:border-emerald-500/30 transform hover:scale-[1.01]">
+                Transcribe Another Video
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-16 text-center space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+            <a
+              href="https://donate.stripe.com/6oUcN531PgI59DM4Xs9sk02"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group/stripe relative inline-flex items-center gap-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 hover:from-indigo-400 hover:via-purple-400 hover:to-indigo-500 text-white font-semibold py-5 px-10 rounded-2xl transition-all duration-300 shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/50 transform hover:scale-105 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/stripe:translate-x-[100%] transition-transform duration-1000"></div>
+              <div className="relative">
+                <div className="absolute inset-0 bg-white rounded-xl blur-lg opacity-30 group-hover/stripe:opacity-50 transition-opacity"></div>
+                <CreditCard className="relative w-7 h-7" />
+              </div>
+              <div className="relative text-left">
+                <div className="text-base font-bold">Donate Securely with Stripe</div>
+                <div className="text-sm opacity-90 font-normal">Support this project</div>
+              </div>
+            </a>
+
+            <a
+              href="https://nowpayments.io/donation/tpbs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group/crypto relative inline-flex items-center gap-4 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-400 hover:via-amber-400 hover:to-orange-500 text-white font-semibold py-5 px-10 rounded-2xl transition-all duration-300 shadow-xl shadow-orange-500/25 hover:shadow-orange-500/50 transform hover:scale-105 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover/crypto:translate-x-[100%] transition-transform duration-1000"></div>
+              <div className="relative">
+                <div className="absolute inset-0 bg-white rounded-xl blur-lg opacity-30 group-hover/crypto:opacity-50 transition-opacity"></div>
+                <Coins className="relative w-7 h-7" />
+              </div>
+              <div className="relative text-left">
+                <div className="text-base font-bold">Donate Crypto</div>
+                <div className="text-sm opacity-90 font-normal">Ethereum & Monero accepted</div>
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <div className="mt-16 pt-8 border-t border-slate-800/50 text-center space-y-4">
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-4 sm:gap-8 text-slate-500 text-sm">
+            <a href="/privacy" className="hover:text-emerald-400 transition-colors">Privacy Policy</a>
+            <span className="hidden sm:inline">•</span>
+            <p>© 2025 TP Business Solutions. All Rights Reserved.</p>
+          </div>
+          <p className="text-slate-500 text-sm font-light">Faster. Smarter. More accurate.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
