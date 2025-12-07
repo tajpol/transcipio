@@ -66,4 +66,85 @@ export default async function handler(req, res) {
 
     const data = await new Promise((resolve, reject) => {
       form.parse(req, (err, fields, files) => {
-        if (err
+        if (err) return reject(err);
+        resolve({ fields, files });
+      });
+    });
+
+    const fileField = data.files?.file || data.files?.audio || data.files?.upload;
+    if (!fileField) {
+      return res.status(400).json({ error: "No audio file uploaded" });
+    }
+    const file = Array.isArray(fileField) ? fileField[0] : fileField;
+
+    // Validate mime
+    const mimetype = file.mimetype || file.type || "";
+    if (!ALLOWED_MIME_PREFIXES.some((p) => mimetype.startsWith(p))) {
+      await fs.unlink(file.filepath).catch(() => {});
+      return res.status(400).json({ error: "Invalid file type; audio required" });
+    }
+
+    if (file.size > MAX_FILE_BYTES) {
+      await fs.unlink(file.filepath).catch(() => {});
+      return res.status(400).json({ error: "File too large" });
+    }
+
+    // Move to safe name (optional)
+    const safeName = generateSafeName(file.originalFilename || file.newFilename || "audio");
+    const dest = path.join(os.tmpdir(), safeName);
+    await fs.rename(file.filepath, dest);
+
+    // === Send to OpenAI transcription endpoint ===
+    // NOTE: OpenAI API key must be set in process.env.OPENAI_API_KEY
+    if (!process.env.OPENAI_API_KEY) {
+      await fs.unlink(dest).catch(() => {});
+      return res.status(500).json({ error: "Server misconfigured: missing OPENAI_API_KEY" });
+    }
+
+    // Create multipart/form-data
+    const formData = new FormData();
+    const fileStream = await fs.readFile(dest);
+    formData.append("file", fileStream, { filename: safeName });
+    // model may differ depending on OpenAI API version; "whisper-1" was common; adjust if needed
+    formData.append("model", "whisper-1");
+
+    // optional: language or prompt can be passed via fields
+    // const { language } = data.fields || {};
+    // if (language) formData.append("language", language);
+
+    // Use fetch to OpenAI
+    const openaiResp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        // Do not set content-type; let formData set the multipart boundary
+      },
+      body: formData,
+    });
+
+    if (!openaiResp.ok) {
+      const text = await openaiResp.text();
+      // clean up
+      await fs.unlink(dest).catch(() => {});
+      console.error("OpenAI error:", openaiResp.status, text);
+      return res.status(502).json({ error: "Transcription service error" });
+    }
+
+    const transcription = await openaiResp.json();
+
+    // cleanup
+    await fs.unlink(dest).catch(() => {});
+
+    // Return only transcription text and minimal metadata
+    return res.status(200).json({
+      status: "success",
+      text: transcription.text ?? transcription?.result ?? "",
+    });
+  } catch (err) {
+    try {
+      if (err?.path) await fs.unlink(err.path).catch(() => {});
+    } catch (e) {}
+    console.error("transcribe error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+}
