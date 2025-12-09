@@ -1,0 +1,44 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+.next/cache
+
+# Vercel / deployment
+.vercel/
+.vercel_build_output/
+
+# Environment files (never commit these)
+.env*
+!.env.example
+
+# Logs
+logs/
+*.log
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Uploaded files / temp
+tmp/
+temp/
+uploads/
+*.tmp
+
+# Misc
+coverage/
+dist/

@@ -1,58 +1,132 @@
+// pages/api/upload.js
+import { IncomingForm } from "formidable";
+import fs from "fs/promises";
+import path from "path";
+import os from "os";
+import crypto from "crypto";
+
 export const config = {
   api: {
-    bodyParser: {
-      sizeLimit: '200mb',
-    },
+    bodyParser: false, // required for formidable
+    sizeLimit: "10mb", // safeguard; formidable will also enforce settings below
   },
 };
 
+/**
+ * Simple in-memory rate limiter (per-IP). Works as a basic protection.
+ * Note: in serverless, in-memory limits reset per instance. For production
+ * use a shared store (Redis, Upstash, etc).
+ */
+const rateMap = new Map();
+const WINDOW_SECONDS = parseInt(process.env.RATE_LIMIT_WINDOW_SECONDS || "60", 10);
+const MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "20", 10);
+
+function isRateLimited(ip) {
+  if (!ip) return false;
+  const now = Date.now();
+  const windowStart = now - WINDOW_SECONDS * 1000;
+  const entry = rateMap.get(ip) || [];
+  const filtered = entry.filter((ts) => ts > windowStart);
+  filtered.push(now);
+  rateMap.set(ip, filtered);
+  return filtered.length > MAX_REQUESTS;
+}
+
+function generateSafeName(originalName) {
+  const ext = path.extname(originalName).toLowerCase();
+  const id = crypto.randomBytes(10).toString("hex");
+  // keep only alphanumeric in basename to avoid path attacks
+  const base = path.basename(originalName, ext).replace(/[^a-zA-Z0-9-_\.]/g, "_");
+  return `${Date.now()}_${id}_${base}${ext}`;
+}
+
+const ALLOWED_MIME_PREFIXES = ["image/", "audio/", "video/"]; // restrict as needed
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).end('Method Not Allowed');
-  }
-
-  const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
-  const UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET;
-
-  if (!CLOUD_NAME || !UPLOAD_PRESET) {
-    return res.status(500).json({ error: 'Cloudinary not configured on the server.' });
-  }
-
   try {
-    const { filename, data, mimeType } = req.body;
-    if (!data || !filename) return res.status(400).json({ error: 'Missing file data or filename' });
+    // Auth: simple header-based API key
+    const incomingKey = req.headers["x-api-key"] || req.headers["X-API-KEY"];
+    if (!incomingKey || incomingKey !== process.env.PRIVATE_API_KEY) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-    // Convert base64 string to a Blob (Node 18+ runtime supports Blob and FormData)
-    const base64Data = data.split(',')[1] ?? data; // tolerate data URLs
-    const buffer = Buffer.from(base64Data, 'base64');
-    const blob = new Blob([buffer], { type: mimeType || 'application/octet-stream' });
+    // Rate limit by IP
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    if (isRateLimited(ip)) {
+      return res.status(429).json({ error: "Too many requests" });
+    }
 
-    const formData = new FormData();
-    formData.set('file', blob, filename);
-    formData.set('upload_preset', UPLOAD_PRESET);
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
 
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload`;
-    const cloudRes = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
+    // Parse multipart/form-data with formidable
+    const form = new IncomingForm({
+      multiples: false,
+      maxFileSize: MAX_FILE_BYTES,
+      keepExtensions: true,
+      uploadDir: os.tmpdir(),
     });
 
-    const json = await cloudRes.json();
-    if (!cloudRes.ok) {
-      console.error('Cloudinary Error:', json);
-      return res.status(cloudRes.status).json({ error: json.error?.message || json.error || 'Cloudinary upload failed', details: json });
+    const data = await new Promise((resolve, reject) => {
+      form.parse(req, (err, fields, files) => {
+        if (err) return reject(err);
+        resolve({ fields, files });
+      });
+    });
+
+    const fileField = data.files?.file || data.files?.upload; // accept either 'file' or 'upload'
+    if (!fileField) {
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
-    // Verify secure_url exists and is valid
-    if (!json.secure_url) {
-      console.error('No secure_url in Cloudinary response:', json);
-      return res.status(500).json({ error: 'Cloudinary upload succeeded but no URL returned' });
+    // Formidable may give an object or an array; normalize
+    const file = Array.isArray(fileField) ? fileField[0] : fileField;
+
+    // Validate MIME type
+    const mimetype = file.mimetype || file.type || "";
+    if (!ALLOWED_MIME_PREFIXES.some((p) => mimetype.startsWith(p))) {
+      // Clean up the uploaded temp file
+      await fs.unlink(file.filepath).catch(() => {});
+      return res.status(400).json({ error: "Invalid file type" });
     }
 
-    return res.status(200).json(json);
+    // Validate file size (double-check)
+    if (file.size > MAX_FILE_BYTES) {
+      await fs.unlink(file.filepath).catch(() => {});
+      return res.status(400).json({ error: "File too large" });
+    }
+
+    // Sanitize filename and move to temp with safe name (optional)
+    const safeName = generateSafeName(file.originalFilename || file.newFilename || "upload");
+    const dest = path.join(os.tmpdir(), safeName);
+    await fs.rename(file.filepath, dest);
+
+    // === DO YOUR PROCESSING HERE ===
+    // e.g., upload dest to S3, Cloud Storage, or scan it. Do NOT return secret data.
+    // Example: pretend we uploaded and generated a storage key:
+    const fakeStorageKey = `uploads/${safeName}`;
+
+    // After upload/processing, remove the temp file
+    await fs.unlink(dest).catch(() => {});
+
+    return res.status(200).json({
+      status: "success",
+      message: "File accepted and processed",
+      file: {
+        name: safeName,
+        size: file.size,
+        mime: mimetype,
+        storageKey: fakeStorageKey, // replace with real storage URL/key after you upload
+      },
+    });
   } catch (err) {
-    console.error('Upload API Error:', err);
-    return res.status(500).json({ error: err.message });
+    // On error, try to clean any tmp files (best-effort)
+    try {
+      if (err?.path) await fs.unlink(err.path).catch(() => {});
+    } catch (e) {}
+    console.error("upload error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 }

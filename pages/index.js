@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileVideo, Download, Loader2, CheckCircle, AlertCircle, Coffee, Sparkles, Home, CreditCard, Coins } from 'lucide-react';
+import { Upload, FileVideo, Download, Loader2, CheckCircle, AlertCircle, Sparkles, Home, CreditCard, Coins } from 'lucide-react';
 
 export default function Transcipio() {
   const [file, setFile] = useState(null);
@@ -27,7 +27,6 @@ export default function Transcipio() {
       setTranscript(null);
       setError(null);
       
-      // Get video duration
       const video = document.createElement('video');
       video.preload = 'metadata';
       video.onloadedmetadata = () => {
@@ -63,91 +62,60 @@ export default function Transcipio() {
     setProgress('Uploading video...');
 
     try {
-      // Step 1: Read file as base64 and upload via server proxy
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = reader.result;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', 'transcipio_uploads');
+      
+      setProgress('Uploading to cloud storage...');
+      const cloudinaryResponse = await fetch(
+        'https://api.cloudinary.com/v1_1/dso0luj36/video/upload',
+        { method: 'POST', body: formData }
+      );
+
+      if (!cloudinaryResponse.ok) {
+        throw new Error('Upload failed. Please check your file and try again.');
+      }
+
+      const cloudinaryData = await cloudinaryResponse.json();
+      const videoUrl = cloudinaryData.secure_url;
+
+      setStatus('transcribing');
+      setProgress('Starting transcription...');
+
+      const transcribeResponse = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_url: videoUrl, language_code: language }),
+      });
+
+      if (!transcribeResponse.ok) {
+        throw new Error('Failed to start transcription. Please try again.');
+      }
+
+      const transcribeData = await transcribeResponse.json();
+      const transcriptId = transcribeData.id;
+
+      setProgress('Transcribing... This may take a few minutes.');
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
-        try {
-          setProgress('Uploading to cloud storage...');
-          const uploadResponse = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              data: base64Data,
-              mimeType: file.type,
-            }),
-          });
-
-          if (!uploadResponse.ok) {
-            const errorData = await uploadResponse.json();
-            throw new Error(errorData.error || `Upload failed with status ${uploadResponse.status}`);
-          }
-
-          const uploadData = await uploadResponse.json();
-          const videoUrl = uploadData.secure_url;
-
-          if (!videoUrl) {
-            throw new Error('Upload succeeded but no video URL returned');
-          }
-
-          // Step 2: Send to AssemblyAI via server proxy
-          setStatus('transcribing');
-          setProgress('Starting transcription...');
-
-          const transcribeResponse = await fetch('/api/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio_url: videoUrl, language_code: language }),
-          });
-
-          if (!transcribeResponse.ok) {
-            const errorData = await transcribeResponse.json();
-            const errorMsg = errorData.error || errorData.message || `Transcription initiation failed with status ${transcribeResponse.status}`;
-            throw new Error(errorMsg);
-          }
-
-          const transcribeData = await transcribeResponse.json();
-          
-          if (!transcribeData.id) {
-            throw new Error('Transcription initiated but no ID returned');
-          }
-          
-          const transcriptId = transcribeData.id;
-
-          // Step 3: Poll for transcript completion
-          setProgress('Transcribing... This may take a few minutes.');
-          let transcriptResult = null;
-          
-          while (true) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            const pollingResponse = await fetch(`/api/transcribe?id=${transcriptId}`);
-            
-            if (!pollingResponse.ok) {
-              const errorData = await pollingResponse.json();
-              const errorMsg = errorData.error || errorData.message || `Polling failed with status ${pollingResponse.status}`;
-              throw new Error(errorMsg);
-            }
-
-            transcriptResult = await pollingResponse.json();
-            if (transcriptResult.status === 'completed') {
-              setStatus('completed');
-              setTranscript(transcriptResult);
-              setProgress('');
-              break;
-            } else if (transcriptResult.status === 'error') {
-              const errorMsg = transcriptResult.error || 'Transcription failed on AssemblyAI';
-              throw new Error(errorMsg);
-            }
-          }
-        } catch (err) {
-          setStatus('error');
-          setError(err.message);
-          setProgress('');
+        const pollingResponse = await fetch(`/api/transcribe?id=${transcriptId}`);
+        
+        if (!pollingResponse.ok) {
+          throw new Error('Failed to check transcription status.');
         }
-      };
-      reader.readAsDataURL(file);
+
+        const transcriptResult = await pollingResponse.json();
+        
+        if (transcriptResult.status === 'completed') {
+          setStatus('completed');
+          setTranscript(transcriptResult);
+          setProgress('');
+          break;
+        } else if (transcriptResult.status === 'error') {
+          throw new Error(transcriptResult.error || 'Transcription failed');
+        }
+      }
     } catch (err) {
       setStatus('error');
       setError(err.message);
@@ -220,8 +188,7 @@ export default function Transcipio() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const formatTimeSRT = (ms) => {
+const formatTimeSRT = (ms) => {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -254,7 +221,6 @@ export default function Transcipio() {
       </div>
 
       <div className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Home Button */}
         {(file || status !== 'idle') && (
           <button
             onClick={resetToHome}
@@ -265,7 +231,6 @@ export default function Transcipio() {
           </button>
         )}
 
-        {/* Header */}
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-3 mb-6 group">
             <div className="relative">
@@ -314,7 +279,7 @@ export default function Transcipio() {
                             </div>
                           </div>
                         )}
-                      </div>
+</div>
                       <button type="button" onClick={handleChangeFile} className="text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:scale-105 bg-slate-800/50 px-4 py-2 rounded-lg">
                         Change file
                       </button>
@@ -335,7 +300,7 @@ export default function Transcipio() {
                         <div className="flex items-center justify-center gap-3">
                           <button
                             type="button"
-                            onClick={() => setLanguage('en')}
+                            onClick={(e) => { e.preventDefault(); setLanguage('en'); }}
                             className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
                               language === 'en'
                                 ? 'bg-emerald-500 text-white'
@@ -346,7 +311,7 @@ export default function Transcipio() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setLanguage('es')}
+                            onClick={(e) => { e.preventDefault(); setLanguage('es'); }}
                             className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 ${
                               language === 'es'
                                 ? 'bg-emerald-500 text-white'
@@ -454,7 +419,6 @@ export default function Transcipio() {
           </div>
         )}
 
-        {/* Donation Buttons */}
         <div className="mt-16 text-center space-y-4">
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <a
@@ -493,7 +457,6 @@ export default function Transcipio() {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="mt-16 pt-8 border-t border-slate-800/50 text-center space-y-4">
           <div className="flex flex-col sm:flex-row justify-center items-center gap-4 sm:gap-8 text-slate-500 text-sm">
             <a href="/privacy" className="hover:text-emerald-400 transition-colors">Privacy Policy</a>

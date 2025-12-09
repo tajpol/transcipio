@@ -16,7 +16,7 @@ export default function Privacy() {
         <h2 className="text-xl font-semibold mt-4 mb-2 text-emerald-200">Retention</h2>
         <p className="text-slate-300 mb-3">Depending on your cloud storage and transcription provider settings, copies of uploaded media and transcripts may be retained by those services. Please consult the provider's privacy policies for specifics.</p>
         <h2 className="text-xl font-semibold mt-4 mb-2 text-emerald-200">Contact</h2>
-        <p className="text-slate-300 mb-3">If you have questions about privacy, please contact support@tpbusiness.example (replace with your contact address).</p>
+        <p className="text-slate-300 mb-3">If you have questions about privacy, please contact hello@tpbsolutions.org </p>
         <div className="mt-6">
           <a href="/" className="text-emerald-400 underline">Back to Transcipio</a>
         </div>
