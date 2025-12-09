@@ -12,35 +12,18 @@ export default async function handler(req, res) {
       const { audio_url, language_code } = req.body;
       if (!audio_url) return res.status(400).json({ error: 'Missing audio_url in request body' });
 
-      // Validate that audio_url is a proper HTTPS URL
-      if (!audio_url.startsWith('http://') && !audio_url.startsWith('https://')) {
-        return res.status(400).json({ error: 'audio_url must be a valid HTTP/HTTPS URL' });
-      }
-
-      const requestBody = {
-        audio_url,
-        language_code: language_code || 'en',
-      };
-
       const createRes = await fetch(API_BASE, {
         method: 'POST',
         headers: {
           Authorization: API_KEY,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({ audio_url, language_code }),
       });
 
       const data = await createRes.json();
-      
-      if (!createRes.ok) {
-        console.error('AssemblyAI Error:', data);
-        return res.status(createRes.status).json({ error: data.error || data.message || 'AssemblyAI transcription failed' });
-      }
-      
-      return res.status(200).json(data);
+      return res.status(createRes.status).json(data);
     } catch (err) {
-      console.error('Transcribe API Error:', err);
       return res.status(500).json({ error: err.message });
     }
   }
